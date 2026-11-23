@@ -17,6 +17,10 @@ const MAX_LAG = { D: 10, M: 80, Q: 170, A: 640 };
 const MAX_LAG_SERIES = { "Kurzarbeitende": 175 };
 const MAX_FETCH_AGE_H = 54; // Update läuft täglich; > 2 Tage = Update ausgefallen
 
+// Daten: Auf GitHub Pages liegen sie neben der Seite. Lokal (Vorschau, Doppelklick)
+// werden die aktuellen Daten direkt von der veröffentlichten Seite geholt.
+const DATA_BASE = location.hostname.endsWith("github.io") ? "" : "https://emanuelhohn.github.io/dashboard/";
+
 let CH = null;    // data.json
 let INTL = null;  // intl.json
 let intlPromise = null;
@@ -95,7 +99,7 @@ function status(obj, { lastDate = null, hasForecast = false } = {}) {
   const last = lastDate || (obj.data && obj.data.length ? obj.data[obj.data.length - 1][0] : null);
   if (obj.error) return { level: "crit", text: "Abruf fehlgeschlagen", long: `Letzter Abruf fehlgeschlagen – angezeigt werden ältere Daten (Stand ${fmtPeriod(last || "")}).` };
   const fetchedAgeH = (NOW - new Date(obj.fetched)) / 36e5;
-  if (fetchedAgeH > MAX_FETCH_AGE_H) return { level: "crit", text: "Nicht aktualisiert", long: `Seit ${Math.round(fetchedAgeH / 24)} Tagen nicht mehr abgerufen.` };
+  if (fetchedAgeH > MAX_FETCH_AGE_H) return { level: "crit", age: true, text: "Nicht aktualisiert", long: `Seit ${Math.round(fetchedAgeH / 24)} Tagen nicht mehr abgerufen.` };
   if (!last) return { level: "crit", text: "Keine Werte", long: "Keine Werte vorhanden." };
   if (!hasForecast) {
     const lag = (NOW - periodEnd(last)) / DAY;
@@ -103,10 +107,10 @@ function status(obj, { lastDate = null, hasForecast = false } = {}) {
   }
   return { level: "ok", text: "Aktuell", long: `Letzter Wert: ${fmtPeriod(last, true)}, abgerufen ${fmtDateTime(obj.fetched)}.` };
 }
-function badge(st) {
-  const icon = { ok: "✓", warn: "⚠", crit: "✕" }[st.level];
-  return h("span", { class: `badge ${st.level}`, title: st.long }, icon, " ", st.text);
-}
+// Kleiner Ampelpunkt bei einer Zahl – nur wenn genau diese Reihe ein Problem hat.
+// (Fällt das ganze Update aus, zeigt das die Ampel in der Kopfzeile.)
+function hasOwnProblem(st) { return st && st.level !== "ok" && !st.age; }
+function smallDot(st) { return hasOwnProblem(st) ? h("i", { class: `dot sm ${st.level}`, title: st.long }) : null; }
 
 // ---------- Reihen ----------
 const S = (id) => CH.series[id];
@@ -269,17 +273,13 @@ function panel(cfg) {
       toCSV([["Periode", ...lines.map((l) => `${l.label} (${unit})`)], ...dates.map((d) => [d, ...maps.map((m) => m.get(d) ?? "")])]));
   } }, "CSV");
 
-  const sources = [...new Map(lines.map((l) => [l.meta.source, l.meta.link])).entries()];
   appendAll(el,
     h("div", { class: "panel-head" },
-      h("div", {}, h("h3", {}, cfg.title), h("div", { class: "sub" }, (cfg.sub ? cfg.sub + " · " : "") + unit + standText)),
-      badge(worst)),
+      h("div", {}, h("h3", {}, cfg.title), h("div", { class: "sub" }, (cfg.sub ? cfg.sub + " · " : "") + unit + standText, smallDot(worst)))),
     h("div", { class: "panel-tools" }, seg, h("div", { class: "tools-right" }, tblBtn, csvBtn)),
     lines.length > 1 ? legendEl(lines.map((l, i) => ({ label: l.label, color: css(SERIES_VARS[l.color ?? i]) }))) : null,
     box, tableBox,
     cfg.explain ? h("p", { class: "explain", html: cfg.explain }) : null,
-    h("div", { class: "src" }, "Quelle: ", sources.map(([s, l]) => (l ? h("a", { href: l, target: "_blank", rel: "noopener" }, s) : s)),
-      worst.level !== "ok" ? h("span", {}, "· " + worst.long) : null),
   );
   el._render = render;
   el._setRange = (r) => { if (ranges.includes(r)) { range = r; render(); } };
@@ -301,7 +301,7 @@ const PAGES = [
   { id: "umwelt", label: "Umwelt" },
   { id: "welt", label: "Ländervergleich" },
   { id: "ranking", label: "Ranking" },
-  { id: "daten", label: "Alle Daten" },
+  { id: "quellen", label: "Quellen" },
 ];
 
 function pageHead(title, text, actions = []) {
@@ -317,10 +317,10 @@ function compareBtn(indicator, label = "International vergleichen") {
 // ---------- Überblick ----------
 function tileEl({ cat, page, label, value, unit, dec = 1, period, delta, spark, st }) {
   return h("a", { class: "tile", href: "#" + page },
-    h("div", { class: "cat" }, h("span", {}, cat), st ? badge(st) : null),
+    h("div", { class: "cat" }, cat),
     h("div", { class: "label" }, label),
     h("div", { class: "value num" }, value == null ? "–" : fmt(value, dec), unit ? h("small", {}, unit) : null),
-    h("div", { class: "meta" }, period || ""),
+    h("div", { class: "meta" }, period || "", smallDot(st)),
     delta ? h("div", { class: "delta" }, delta) : null,
     spark ? sparkSVG(spark) : null);
 }
@@ -558,8 +558,8 @@ function renderUmwelt(root) {
 // International
 // ======================================================================
 function loadIntl() {
-  if (!intlPromise) intlPromise = fetch("data/intl.json", { cache: "no-cache" }).then((r) => { if (!r.ok) throw new Error(r.status); return r.json(); })
-    .then((j) => { INTL = j; buildMonthlyInflation(); updateBanner(); return j; });
+  if (!intlPromise) intlPromise = fetch(DATA_BASE + "data/intl.json", { cache: "no-cache" }).then((r) => { if (!r.ok) throw new Error(r.status); return r.json(); })
+    .then((j) => { INTL = j; buildMonthlyInflation(); updateStatus(); return j; });
   return intlPromise;
 }
 function intlError(container) { return () => container.append(h("div", { class: "banner" }, h("div", { class: "msg crit" }, "✕ Internationale Daten konnten nicht geladen werden."))); }
@@ -770,12 +770,11 @@ function buildRanking(body) {
     const isFc = ds.forecastFrom && +year >= ds.forecastFrom;
 
     out.replaceChildren(h("section", { class: "panel" },
-      h("div", { class: "panel-head" }, h("div", {}, h("h3", {}, `${ds.title} ${year}`), h("div", { class: "sub" }, `${ds.unit} · ${RANK_GROUPS[grp][0]} · ${total} Länder mit Daten`)), badge(status(ds, { lastDate: latestOf(ds), hasForecast: !!ds.forecastFrom }))),
+      h("div", { class: "panel-head" }, h("div", {}, h("h3", {}, `${ds.title} ${year}`), h("div", { class: "sub" }, `${ds.unit} · ${RANK_GROUPS[grp][0]} · ${total} Länder mit Daten`))),
       chPos >= 0 ? h("p", { class: "rank-ch" }, "Schweiz: ", h("b", {}, `Rang ${chPos + 1}`), ` von ${total} · ${fmt(rows[chPos][1], dec)} ${ds.unit}`) : h("p", { class: "note" }, "Keine Daten für die Schweiz in diesem Jahr."),
       h("div", { class: "panel-tools" }, h("div", { class: "tools-right" }, tblBtn, csvBtn)),
       box, tbl,
-      h("p", { class: "explain" }, isFc ? `Achtung: ${year} ist eine Schätzung bzw. Prognose des IWF.` : ""),
-      h("div", { class: "src" }, "Quelle: ", h("a", { href: ds.link, target: "_blank", rel: "noopener" }, ds.source))));
+      h("p", { class: "explain" }, isFc ? `Achtung: ${year} ist eine Schätzung bzw. Prognose des IWF.` : "")));
 
     const old = charts.get("rank"); if (old) old.destroy();
     const ch = css("--s1"), neutral = css("--bar-neutral");
@@ -803,28 +802,77 @@ function buildRanking(body) {
   render();
 }
 
-// ---------- Alle Daten ----------
-function renderDaten(root) {
-  appendAll(root, pageHead("Alle Datenreihen", "Übersicht über alle Daten, ihren Stand und ihre Quelle. Jede Reihe kann als CSV (für Excel) heruntergeladen werden."));
-  const mk = (rows) => h("div", { class: "tablebox", style: "max-height:none" }, h("table", {},
-    h("thead", {}, h("tr", {}, ["Datenreihe", "Einheit", "Neuster Wert", "Stand", "Status", "Quelle", ""].map((t, i) => h("th", { style: i === 0 || i === 5 ? "text-align:left" : "" }, t)))),
+// ---------- Quellen (Datenstand aller Reihen) ----------
+// Gesamtzustand für die Ampel: rot = automatisches Update ausgefallen,
+// gelb = einzelne Reihen veraltet/fehlerhaft, grün = alles in Ordnung.
+function allStatuses() {
+  const rows = Object.entries(CH.series).map(([id, s]) => ({ id, obj: s, st: status(s), intl: false }));
+  if (INTL) for (const [k, ds] of Object.entries(INTL.datasets)) {
+    if (k === "infl_m") continue;
+    rows.push({ id: k, obj: ds, st: status(ds, { lastDate: latestOf(ds), hasForecast: !!ds.forecastFrom }), intl: true });
+  }
+  return rows;
+}
+function overall() {
+  const ageH = (NOW - new Date(CH.generated)) / 36e5;
+  const problems = allStatuses().filter((r) => r.st.level !== "ok" && !r.st.age);
+  if (ageH > MAX_FETCH_AGE_H) return { level: "crit", text: "Update ausgefallen", long: `Seit ${Math.floor(ageH / 24)} Tagen keine neuen Daten. Das automatische Update funktioniert nicht.`, problems };
+  if (problems.length) return { level: "warn", text: problems.length === 1 ? "1 Reihe veraltet" : `${problems.length} Reihen veraltet`, long: problems.map((r) => r.obj.title).join(", "), problems };
+  return { level: "ok", text: "Daten aktuell", long: "Alle Datenreihen sind auf dem neusten Stand.", problems };
+}
+function fmtShort(iso) {
+  const d = new Date(iso);
+  return d.toLocaleDateString("de-CH", { day: "numeric", month: "numeric" }) + ", " + d.toLocaleTimeString("de-CH", { hour: "2-digit", minute: "2-digit" });
+}
+function updateStatus() {
+  const o = overall();
+  const el = $("#status");
+  el.replaceChildren(h("i", { class: `dot ${o.level}` }), h("span", {}, `${o.text} · Stand ${fmtShort(CH.generated)}`));
+  el.title = `${o.long} – Klick: Quellen`;
+}
+
+function renderQuellen(root) {
+  appendAll(root, pageHead("Quellen", "Woher die Zahlen kommen und wie aktuell sie sind. Jede Reihe kann als CSV (für Excel) heruntergeladen werden."));
+  const sum = h("div", { class: "cockpit-sum" });
+  root.append(sum);
+  const paintSum = () => {
+    const o = overall();
+    sum.replaceChildren(
+      h("div", { class: "big" }, h("i", { class: `dot ${o.level}` }), o.text),
+      h("div", { class: "facts" },
+        h("span", {}, `Letztes Update: ${fmtDateTime(CH.generated)}`),
+        h("span", {}, "Automatische Updates: täglich ca. 06:15 und 17:15 Uhr"),
+        o.level !== "ok" ? h("span", {}, o.long) : null));
+  };
+  paintSum();
+
+  const legend = h("p", { class: "note" }, h("i", { class: "dot ok sm" }), " aktuell  ", h("i", { class: "dot warn sm" }), " neuerer Wert wäre zu erwarten  ", h("i", { class: "dot crit sm" }), " Abruf fehlgeschlagen oder Update ausgefallen");
+  const mk = (rows) => h("div", { class: "tablebox cockpit", style: "max-height:none" }, h("table", {},
+    h("thead", {}, h("tr", {}, ["", "Datenreihe", "Neuster Wert", "Stand", "Hinweis", "Quelle", ""].map((t, i) => h("th", { style: [1, 4, 5].includes(i) ? "text-align:left" : "" }, t)))),
     h("tbody", {}, rows)));
-  root.append(h("h2", { class: "section-title" }, "Schweiz & Finanzmärkte"));
-  root.append(mk(Object.entries(CH.series).map(([id, s]) => {
+  const order = { crit: 0, warn: 1, ok: 2 };
+  const statusCell = (st) => h("td", {}, h("i", { class: `dot ${st.level}`, title: st.text }));
+  const srcCell = (o) => h("td", { style: "text-align:left" }, o.link ? h("a", { href: o.link, target: "_blank", rel: "noopener" }, o.source) : o.source);
+
+  root.append(h("h2", { class: "section-title" }, "Schweiz & Finanzmärkte"), legend);
+  const chRows = Object.entries(CH.series).map(([id, s]) => ({ id, s, st: status(s) })).sort((a, b) => order[a.st.level] - order[b.st.level]);
+  root.append(mk(chRows.map(({ id, s, st }) => {
     const l = s.data.at(-1) || [];
-    return h("tr", {}, h("td", {}, s.title), h("td", {}, s.unit), h("td", { class: "num" }, fmtBig(l[1], s.unit)), h("td", {}, fmtPeriod(l[0] || "")), h("td", {}, badge(status(s))),
-      h("td", { style: "text-align:left" }, s.link ? h("a", { href: s.link, target: "_blank", rel: "noopener" }, s.source) : s.source),
+    return h("tr", {}, statusCell(st), h("td", { style: "text-align:left" }, `${s.title} (${s.unit})`), h("td", { class: "num" }, fmtBig(l[1], s.unit)), h("td", {}, fmtPeriod(l[0] || "")),
+      h("td", { class: "reason" }, st.level === "ok" ? "" : st.long), srcCell(s),
       h("td", {}, h("button", { class: "btn", type: "button", onclick: () => download(`${id}.csv`, toCSV([["Periode", `${s.title} (${s.unit})`], ...s.data])) }, "CSV")));
   })));
+
   const intlBox = h("div", {}, h("p", { class: "loading" }, "Internationale Daten werden geladen …"));
   root.append(h("h2", { class: "section-title" }, "International"), intlBox);
   loadIntl().then(() => {
+    paintSum();
     intlBox.replaceChildren(mk(Object.entries(INTL.datasets).filter(([k]) => k !== "infl_m").map(([k, ds]) => {
-      const che = ds.countries.CHE;
       const lastP = latestOf(ds);
-      return h("tr", {}, h("td", {}, ds.title), h("td", {}, ds.unit), h("td", {}, `${Object.keys(ds.countries).length} Länder`), h("td", {}, fmtPeriod(lastP) + (ds.forecastFrom ? " (inkl. Prognose)" : "")),
-        h("td", {}, badge(status(ds, { lastDate: lastP, hasForecast: !!ds.forecastFrom }))),
-        h("td", { style: "text-align:left" }, h("a", { href: ds.link, target: "_blank", rel: "noopener" }, ds.source)),
+      const st = status(ds, { lastDate: lastP, hasForecast: !!ds.forecastFrom });
+      return h("tr", {}, statusCell(st), h("td", { style: "text-align:left" }, `${ds.title} (${ds.unit})`), h("td", {}, `${Object.keys(ds.countries).length} Länder`),
+        h("td", {}, fmtPeriod(lastP) + (ds.forecastFrom ? " (inkl. Prognose)" : "")),
+        h("td", { class: "reason" }, st.level === "ok" ? "" : st.long), srcCell(ds),
         h("td", {}, h("button", { class: "btn", type: "button", onclick: () => {
           const years = [...new Set(Object.values(ds.countries).flatMap((a) => a.map((r) => r[0])))].sort();
           const isos = Object.keys(ds.countries).sort((a, b) => NAME(a).localeCompare(NAME(b), "de"));
@@ -832,34 +880,16 @@ function renderDaten(root) {
           download(`${k}.csv`, toCSV([["Land", "ISO", ...years], ...isos.map((c, i) => [NAME(c), c, ...years.map((y) => maps[i].get(y) ?? "")])]));
         } }, "CSV")));
     })));
-    if (CH.errors.length || INTL.errors.length) root.append(h("h2", { class: "section-title" }, "Fehlermeldungen beim letzten Abruf"),
+    if (CH.errors.length || INTL.errors.length) root.append(h("h2", { class: "section-title" }, "Technische Fehlermeldungen beim letzten Abruf"),
       h("pre", { class: "note", style: "white-space:pre-wrap" }, [...CH.errors, ...INTL.errors].join("\n")));
   }).catch(intlError(intlBox));
 }
 
 // ======================================================================
-// Warnbanner, Navigation, Start
+// Navigation, Start
 // ======================================================================
-function updateBanner() {
-  const banner = $("#banner");
-  const msgs = [];
-  const ageH = (NOW - new Date(CH.generated)) / 36e5;
-  if (ageH > MAX_FETCH_AGE_H) msgs.push(["crit", `✕ <b>Die Daten wurden seit ${Math.floor(ageH / 24)} Tagen nicht mehr aktualisiert</b> (letztes Update: ${fmtDateTime(CH.generated)}). Das automatische Update funktioniert nicht. Zahlen können veraltet sein.`]);
-  const problems = Object.values(CH.series).map((s) => [s, status(s)]).filter(([, st]) => st.level !== "ok");
-  if (INTL) for (const [k, ds] of Object.entries(INTL.datasets)) {
-    if (k === "infl_m") continue;
-    const st = status(ds, { lastDate: latestOf(ds), hasForecast: !!ds.forecastFrom });
-    if (st.level !== "ok") problems.push([ds, st]);
-  }
-  if (problems.length) {
-    const lvl = problems.some(([, st]) => st.level === "crit") ? "crit" : "warn";
-    msgs.push([lvl, `⚠ <b>${problems.length === 1 ? "1 Datenreihe ist" : problems.length + " Datenreihen sind"} nicht aktuell:</b> ${problems.slice(0, 4).map(([s, st]) => `${s.title} (${st.text.toLowerCase()})`).join(", ")}${problems.length > 4 ? " …" : ""}. <a href="#daten">Details</a>`]);
-  }
-  banner.hidden = !msgs.length;
-  banner.innerHTML = msgs.map(([l, m]) => `<div class="msg ${l}" role="status">${m}</div>`).join("");
-}
 
-const RENDER = { ueberblick: renderOverview, wachstum: renderWachstum, preise: renderPreise, geld: renderGeld, maerkte: renderMaerkte, arbeit: renderArbeit, umwelt: renderUmwelt, welt: renderWelt, ranking: renderRanking, daten: renderDaten };
+const RENDER = { ueberblick: renderOverview, wachstum: renderWachstum, preise: renderPreise, geld: renderGeld, maerkte: renderMaerkte, arbeit: renderArbeit, umwelt: renderUmwelt, welt: renderWelt, ranking: renderRanking, quellen: renderQuellen, daten: renderQuellen };
 let currentPage = null;
 
 function route(force = false) {
@@ -869,11 +899,11 @@ function route(force = false) {
   currentPage = page;
   for (const c of charts.values()) c.destroy();
   charts.clear();
-  $("#tabs").querySelectorAll("a").forEach((a) => a.classList.toggle("active", a.dataset.p === page));
+  $("#tabs").querySelectorAll("a").forEach((a) => a.classList.toggle("active", a.dataset.p === (page === "daten" ? "quellen" : page)));
   const app = $("#app");
   app.replaceChildren();
   RENDER[page](app);
-  const t = PAGES.find((p) => p.id === page);
+  const t = PAGES.find((p) => p.id === page) || PAGES.find((p) => p.id === "quellen");
   document.title = page === "ueberblick" ? "Wirtschaftsdaten Schweiz" : `${t.label} – Wirtschaftsdaten Schweiz`;
   window.scrollTo(0, 0);
 }
@@ -894,7 +924,7 @@ function initTheme() {
 }
 
 async function init() {
-  $("#tabs").append(...PAGES.filter((p) => p.id !== "daten").map((p) => h("a", { href: "#" + p.id, "data-p": p.id }, p.label)));
+  $("#tabs").append(...PAGES.map((p) => h("a", { href: "#" + p.id, "data-p": p.id }, p.label)));
   initTheme();
   if (typeof Chart === "undefined") {
     $("#app").replaceChildren(h("div", { class: "banner" }, h("div", { class: "msg crit" }, "✕ Die Diagramm-Bibliothek konnte nicht geladen werden. Besteht eine Internetverbindung?")));
@@ -902,15 +932,14 @@ async function init() {
   }
   Chart.defaults.font.family = css("--font").replace(/"/g, "'") || "system-ui";
   try {
-    const r = await fetch("data/data.json", { cache: "no-cache" });
+    const r = await fetch(DATA_BASE + "data/data.json", { cache: "no-cache" });
     if (!r.ok) throw new Error(r.status);
     CH = await r.json();
   } catch (e) {
     $("#app").replaceChildren(h("div", { class: "banner" }, h("div", { class: "msg crit" }, `✕ Die Daten konnten nicht geladen werden (${e.message}).`)));
     return;
   }
-  $("#stand").textContent = `Datenstand: ${fmtDateTime(CH.generated)}`;
-  updateBanner();
+  updateStatus();
   window.addEventListener("hashchange", () => route());
   route(true);
   loadIntl().catch(() => {});
