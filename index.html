@@ -1,0 +1,38 @@
+<!doctype html>
+<html lang="de-CH">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Wirtschaftsdaten Schweiz</title>
+<meta name="description" content="Aktuelle Wirtschaftszahlen der Schweiz und im internationalen Vergleich – für den Unterricht in Wirtschaft und Recht.">
+<link rel="stylesheet" href="assets/style.css">
+<script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.min.js"></script>
+</head>
+<body>
+<header class="top">
+  <div class="top-inner">
+    <a class="brand" href="#ueberblick">
+      <span class="brand-mark" aria-hidden="true">▲</span>
+      <span><strong>Wirtschaftsdaten Schweiz</strong><small id="stand">Daten werden geladen …</small></span>
+    </a>
+    <button id="themeBtn" class="ghost" type="button" title="Hell/Dunkel umschalten" aria-label="Farbschema umschalten">◐</button>
+  </div>
+  <nav class="tabs" id="tabs" aria-label="Kategorien"></nav>
+</header>
+
+<div id="banner" class="banner" hidden></div>
+
+<main id="app" class="wrap">
+  <p class="loading">Daten werden geladen …</p>
+</main>
+
+<footer class="wrap foot">
+  <p>Quellen: Schweizerische Nationalbank (inkl. Zahlen von BFS und SECO), EZB, Eurostat, OECD, IWF (World Economic Outlook),
+  Our World in Data, Yahoo Finance. Die Daten werden automatisch täglich abgerufen.
+  Ist eine Zahl nicht aktuell, erscheint eine Warnung.</p>
+  <p><a href="#daten">Alle Datenreihen und Download</a></p>
+</footer>
+
+<script src="assets/app.js"></script>
+</body>
+</html>
