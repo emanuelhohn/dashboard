@@ -204,3 +204,44 @@ td.fc { color: var(--muted); font-style: italic; }
 
 /* Abstand am Seitenende */
 #app { padding-bottom: 48px; }
+
+/* ---------- Vollbild für den Beamer ---------- */
+/* Die Klasse .fs liegt auf dem Element im Vollbild (Diagrammkarte bzw. ganzer Vergleich/Ranking). */
+.fs { background: var(--bg); padding: 28px 40px; overflow: auto; display: flex; flex-direction: column; gap: 10px; }
+.panel.fs { background: var(--surface); border: 0; border-radius: 0; box-shadow: none; }
+.fs .panel { display: flex; flex-direction: column; flex: 1 1 auto; min-height: 0; }
+.fs .fs-main { flex: 1 1 auto; display: flex; flex-direction: column; min-height: 0; }
+.fs .chart-box, .fs .chart-box.tall { flex: 1 1 0; height: auto; min-height: 200px; }
+.fs .tablebox { max-height: none; flex: 1 1 auto; }
+.fs .explain, .fs .note { display: none; }
+
+.fs h3 { font-size: 2rem; }
+.fs .panel-head .sub { font-size: 1.15rem; margin-top: 4px; }
+.fs .legend { font-size: 1.25rem; gap: 8px 24px; margin: 8px 0 10px; }
+.fs .legend i { width: 26px; height: 5px; }
+.fs .seg button { font-size: 1.1rem; padding: 8px 16px; }
+.fs .btn, .fs .tools-right button { font-size: 1.1rem; padding: 8px 16px; }
+.fs table { font-size: 1.2rem; }
+.fs th, .fs td { padding: 8px 14px; }
+.fs .controls { padding: 16px 20px; gap: 14px 22px; }
+.fs .controls label { font-size: 1rem; }
+.fs select, .fs input[type=number] { font-size: 1.2rem; padding: 8px 10px; }
+.fs .chip { font-size: 1.2rem; padding: 5px 8px 5px 14px; }
+.fs .chip i { width: 14px; height: 14px; }
+.fs .groupbtns .btn { font-size: 1.05rem; }
+.fs .rank-ch { font-size: 1.5rem; }
+.fs .rank-ch b { font-size: 2rem; }
+
+/* Teuerungsrechner im Vollbild: gross und zentriert */
+.calc-panel.fs { justify-content: center; }
+.calc-panel.fs .calc { gap: 24px; }
+.calc-panel.fs .calc label { font-size: 1.2rem; }
+.calc-panel.fs .calc input, .calc-panel.fs .calc select { font-size: 2.2rem; width: auto; min-width: 180px; padding: 10px 14px; }
+.calc-panel.fs .calc-out { font-size: 2rem; margin-top: 32px; line-height: 1.4; }
+.calc-panel.fs .calc-out b { font-size: 3.4rem; }
+.calc-panel.fs .calc-out .note { display: inline; font-size: 1.4rem; }
+/* Ersatz, wenn der Browser kein echtes Vollbild erlaubt */
+.fs-fake { position: fixed; inset: 0; z-index: 100; width: auto !important; height: auto !important; }
+html.fs-lock, html.fs-lock body { overflow: hidden; }
+.fs .chart-box.rank-box { flex: none; }
+.fs .panel:has(.rank-box) { flex: none; }

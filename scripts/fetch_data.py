@@ -12,6 +12,7 @@ Fällt eine Quelle aus, werden die bisherigen Daten dieser Reihe behalten und de
 vermerkt. Das Dashboard zeigt dann eine Warnung an. Nur Python-Standardbibliothek.
 """
 import csv
+import hashlib
 import io
 import json
 import sys
@@ -232,6 +233,13 @@ def fetch_german_names():
 
 
 # ------------------------------- Ablauf -----------------------------------
+def fingerprint(payload):
+    """Kennung des aktuellen Inhalts: bei Zeitreihen der neuste Wert, bei Länderdaten ein Hash."""
+    if "data" in payload:
+        return json.dumps(payload["data"][-1]) if payload["data"] else ""
+    return hashlib.sha1(json.dumps(payload.get("countries"), sort_keys=True).encode()).hexdigest()
+
+
 class Collector:
     def __init__(self, old):
         self.old = old
@@ -242,7 +250,16 @@ class Collector:
     def run(self, key, fn, meta):
         try:
             payload = fn()
-            self.new[key] = {**meta, "fetched": now_iso(), **payload}
+            # Seit wann gibt es den aktuellen Wert? Nur ändern, wenn die Quelle etwas Neues liefert.
+            old = self.old.get(key, {})
+            fp = fingerprint(payload)
+            if old.get("fp") == fp:
+                changed = old.get("changed")
+            elif "fp" not in old:
+                changed = None  # erster Lauf mit dieser Funktion: Zeitpunkt unbekannt
+            else:
+                changed = now_iso()
+            self.new[key] = {**meta, "fetched": now_iso(), "fp": fp, "changed": changed, **payload}
             self.ok += 1
             print(f"OK   {key}")
         except Exception as e:  # noqa: BLE001
@@ -312,9 +329,11 @@ def main():
         sys.exit(1)
 
     OUT_CH.parent.mkdir(parents=True, exist_ok=True)
-    OUT_CH.write_text(json.dumps({"generated": now_iso(), "series": ch.new, "errors": ch.errors},
+    OUT_CH.write_text(json.dumps({"generated": now_iso(), "trackedSince": old_ch.get("trackedSince") or now_iso(),
+                                  "series": ch.new, "errors": ch.errors},
                                  ensure_ascii=False, separators=(",", ":")), "utf-8")
-    OUT_INTL.write_text(json.dumps({"generated": now_iso(), "names": names, "imf_names": imf_names,
+    OUT_INTL.write_text(json.dumps({"generated": now_iso(), "trackedSince": old_intl.get("trackedSince") or now_iso(),
+                                    "names": names, "imf_names": imf_names,
                                     "datasets": intl.new, "errors": intl.errors},
                                    ensure_ascii=False, separators=(",", ":")), "utf-8")
     for p in (OUT_CH, OUT_INTL):

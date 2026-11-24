@@ -143,10 +143,54 @@ function annual(data, how = "mean") {
 }
 
 // ======================================================================
+// Vollbild (für den Beamer): Die ganze Karte bleibt bedienbar.
+// ======================================================================
+// Echtes Vollbild, wo der Browser es erlaubt; sonst füllt die Karte das ganze Fenster.
+let fakeFs = null;
+const realFs = () => document.fullscreenElement || document.webkitFullscreenElement || null;
+const fsElement = () => realFs() || fakeFs;
+const isBig = (el) => !!(el && el.closest && el.closest(".fs"));
+function setFakeFs(target) {
+  if (fakeFs) fakeFs.classList.remove("fs-fake");
+  fakeFs = target;
+  if (fakeFs) fakeFs.classList.add("fs-fake");
+  document.documentElement.classList.toggle("fs-lock", !!fakeFs);
+  onFsChange();
+}
+function toggleFs(target) {
+  if (realFs()) { (document.exitFullscreen || document.webkitExitFullscreen).call(document); return; }
+  if (fakeFs) { setFakeFs(null); return; }
+  const req = target.requestFullscreen || target.webkitRequestFullscreen;
+  let p = null;
+  try { p = req ? req.call(target) : null; } catch (e) { p = null; }
+  if (p && p.catch) p.catch(() => { if (!fakeFs) setFakeFs(target); });
+  if (!req) { setFakeFs(target); return; }
+  // Manche Umgebungen beantworten die Anfrage nie → nach kurzer Zeit Fenster füllen
+  setTimeout(() => { if (!realFs() && !fakeFs) setFakeFs(target); }, 600);
+}
+document.addEventListener("keydown", (e) => { if (e.key === "Escape" && fakeFs) setFakeFs(null); });
+function fsLabel() { return fsElement() ? "✕ Vollbild beenden" : "⛶ Vollbild"; }
+function fsBtn(getTarget) {
+  return h("button", { class: "btn", type: "button", "data-fsbtn": "", title: "Vollbild für den Beamer (beenden mit Esc)", onclick: () => toggleFs(getTarget()) }, fsLabel());
+}
+function onFsChange() {
+  if (realFs() && fakeFs) { fakeFs.classList.remove("fs-fake"); fakeFs = null; document.documentElement.classList.remove("fs-lock"); }
+  document.querySelectorAll(".fs").forEach((e) => e.classList.remove("fs"));
+  const f = fsElement();
+  if (f) f.classList.add("fs");
+  document.querySelectorAll("[data-fsbtn]").forEach((b) => { b.textContent = fsLabel(); });
+  // Diagramme mit passender Schriftgrösse neu zeichnen
+  document.querySelectorAll(".panel, .fs-wrap").forEach((e) => e._render && e._render());
+}
+document.addEventListener("fullscreenchange", onFsChange);
+document.addEventListener("webkitfullscreenchange", onFsChange);
+
+// ======================================================================
 // Diagramme (Chart.js)
 // ======================================================================
-function baseOptions({ unit, dec = 1, span, xmin, xmax, isBar = false, yZero = false }) {
-  const grid = css("--grid"), muted = css("--muted"), text2 = css("--text-2");
+function baseOptions({ unit, dec = 1, span, xmin, xmax, isBar = false, yZero = false, big = false }) {
+  const grid = css("--grid"), muted = big ? css("--text-2") : css("--muted"), text2 = css("--text-2");
+  const tick = { size: big ? 20 : 12 };
   return {
     responsive: true, maintainAspectRatio: false, animation: false, parsing: false, normalized: true,
     interaction: { mode: "nearest", axis: "x", intersect: false },
@@ -154,7 +198,8 @@ function baseOptions({ unit, dec = 1, span, xmin, xmax, isBar = false, yZero = f
       legend: { display: false },
       tooltip: {
         backgroundColor: css("--surface"), titleColor: css("--text"), bodyColor: text2, borderColor: css("--border"), borderWidth: 1,
-        padding: 10, boxPadding: 4, usePointStyle: true,
+        padding: big ? 16 : 10, boxPadding: big ? 8 : 4, usePointStyle: true,
+        titleFont: { size: big ? 22 : 13, weight: "bold" }, bodyFont: { size: big ? 20 : 12 },
         callbacks: {
           title: (items) => items.length ? fmtPeriod(items[0].raw.d, true) + (items[0].raw.f ? " (Prognose)" : "") : "",
           label: (it) => ` ${it.dataset.label}: ${fmt(it.raw.y, dec)} ${unit}`,
@@ -166,12 +211,12 @@ function baseOptions({ unit, dec = 1, span, xmin, xmax, isBar = false, yZero = f
       x: {
         type: "linear", min: xmin, max: xmax, offset: isBar,
         grid: { display: false }, border: { color: grid },
-        ticks: { color: muted, maxRotation: 0, autoSkip: true, maxTicksLimit: 8, callback: (v) => xLabel(v, span) },
+        ticks: { color: muted, font: tick, maxRotation: 0, autoSkip: true, maxTicksLimit: big ? 10 : 8, callback: (v) => xLabel(v, span) },
       },
       y: {
         beginAtZero: yZero, grid: { color: (c) => (c.tick.value === 0 ? muted : grid), lineWidth: (c) => (c.tick.value === 0 ? 1.2 : 1) },
         border: { display: false },
-        ticks: { color: muted, callback: (v) => fmt(v, Math.abs(v) >= 1000 ? 0 : (dec > 2 ? 2 : (Number.isInteger(v) ? 0 : 1))) },
+        ticks: { color: muted, font: tick, callback: (v) => fmt(v, Math.abs(v) >= 1000 ? 0 : (dec > 2 ? 2 : (Number.isInteger(v) ? 0 : 1))) },
       },
     },
   };
@@ -191,7 +236,9 @@ function drawChart(canvas, { type = "line", datasets, unit, dec, xmin, xmax, yZe
   if (old) old.destroy();
   const all = datasets.flatMap((d) => d.data);
   const lo = xmin ?? Math.min(...all.map((p) => p.x)), hi = xmax ?? Math.max(...all.map((p) => p.x));
-  const opts = baseOptions({ unit, dec, span: hi - lo, xmin: lo, xmax: hi, isBar: type === "bar", yZero });
+  const big = isBig(canvas);
+  if (big) for (const ds of datasets) { ds.borderWidth = (ds.borderWidth || 2) * 1.8; ds.pointHoverRadius = 7; }
+  const opts = baseOptions({ unit, dec, span: hi - lo, xmin: lo, xmax: hi, isBar: type === "bar", yZero, big });
   if (type === "bar") {
     opts.interaction = { mode: "nearest", axis: "x", intersect: false };
     for (const ds of datasets) {
@@ -276,7 +323,7 @@ function panel(cfg) {
   appendAll(el,
     h("div", { class: "panel-head" },
       h("div", {}, h("h3", {}, cfg.title), h("div", { class: "sub" }, (cfg.sub ? cfg.sub + " · " : "") + unit + standText, smallDot(worst)))),
-    h("div", { class: "panel-tools" }, seg, h("div", { class: "tools-right" }, tblBtn, csvBtn)),
+    h("div", { class: "panel-tools" }, seg, h("div", { class: "tools-right" }, tblBtn, csvBtn, fsBtn(() => (cfg.fsTarget ? cfg.fsTarget() : el)))),
     lines.length > 1 ? legendEl(lines.map((l, i) => ({ label: l.label, color: css(SERIES_VARS[l.color ?? i]) }))) : null,
     box, tableBox,
     cfg.explain ? h("p", { class: "explain", html: cfg.explain }) : null,
@@ -485,8 +532,10 @@ function teuerungsrechner() {
   };
   [amount, from, to].forEach((e) => e.addEventListener("input", calc));
   calc();
-  return h("section", { class: "panel" },
-    h("div", { class: "panel-head" }, h("div", {}, h("h3", {}, "Teuerungsrechner"), h("div", { class: "sub" }, "Was ist ein Frankenbetrag von damals heute wert?"))),
+  const sec = h("section", { class: "panel calc-panel" });
+  return appendAll(sec,
+    h("div", { class: "panel-head" }, h("div", {}, h("h3", {}, "Teuerungsrechner"), h("div", { class: "sub" }, "Was ist ein Frankenbetrag von damals heute wert?")),
+      fsBtn(() => sec)),
     h("div", { class: "calc" }, h("label", {}, "Betrag (CHF)", amount), h("label", {}, "Jahr", from), h("label", {}, "umgerechnet ins Jahr", to)),
     out,
     h("p", { class: "explain" }, "Berechnet mit dem Jahresdurchschnitt des Landesindex der Konsumentenpreise (BFS)."));
@@ -646,7 +695,8 @@ function buildWelt(body) {
   const groupBox = h("div", { class: "groupbtns" });
   const addSel = h("select", { "aria-label": "Land hinzufügen" });
   const chips = h("div", { class: "chips" });
-  const out = h("div", {});
+  const out = h("div", { class: "fs-main" });
+  body.classList.add("fs-wrap");
   body.replaceChildren(
     h("div", { class: "controls" }, h("label", {}, "Kennzahl", indSel), h("label", {}, "Ländergruppe", groupBox), h("label", {}, "Land hinzufügen", addSel)),
     chips, out);
@@ -688,6 +738,7 @@ function buildWelt(body) {
         staleNote(ds, selected),
       ].filter(Boolean).join(" "),
       file: `${ds.title}_${selected.join("-")}`,
+      fsTarget: () => body,
     });
     const origSet = p._setRange;
     p.querySelectorAll(".seg button").forEach((b) => b.addEventListener("click", () => { range = b.dataset.r; setHash(); }));
@@ -736,7 +787,8 @@ function buildRanking(body) {
   const yearSel = h("select", { "aria-label": "Jahr" });
   const topSel = h("select", { "aria-label": "Anzahl" }, [["10", "Top 10"], ["30", "Top 30"], ["60", "Top 60"], ["all", "Alle"]].map(([v, l]) => h("option", { value: v, selected: v === top }, l)));
   const orderBtn = h("button", { class: "btn", type: "button" }, "Höchste zuerst");
-  const out = h("div", {});
+  const out = h("div", { class: "fs-main" });
+  body.classList.add("fs-wrap");
   body.replaceChildren(h("div", { class: "controls" },
     h("label", {}, "Kennzahl", indSel), h("label", {}, "Jahr", yearSel), h("label", {}, "Länder", grpSel), h("label", {}, "Anzeigen", topSel), h("label", {}, "Reihenfolge", orderBtn)), out);
 
@@ -759,8 +811,9 @@ function buildRanking(body) {
     const dec = DEC[key];
 
     const canvas = h("canvas", { role: "img", "aria-label": `Ranking ${ds.title}` });
-    const hgt = Math.max(220, shown.length * 22 + 40);
-    const box = h("div", { class: "chart-box", style: `height:${hgt}px` }, canvas);
+    const big = isBig(body);
+    const hgt = Math.max(220, shown.length * (big ? 36 : 22) + 40);
+    const box = h("div", { class: "chart-box rank-box", style: `height:${hgt}px` }, canvas);
     const tbl = h("div", { class: "tablebox" }, h("table", {},
       h("thead", {}, h("tr", {}, h("th", {}, "Rang"), h("th", { style: "text-align:left" }, "Land"), h("th", {}, `${ds.title} (${ds.unit})`))),
       h("tbody", {}, rows.map(([c, v], i) => h("tr", { class: c === "CHE" ? "hl" : "" }, h("td", {}, String(i + 1)), h("td", { style: "text-align:left" }, NAME(c)), h("td", { class: "num" }, fmt(v, dec)))))));
@@ -772,7 +825,7 @@ function buildRanking(body) {
     out.replaceChildren(h("section", { class: "panel" },
       h("div", { class: "panel-head" }, h("div", {}, h("h3", {}, `${ds.title} ${year}`), h("div", { class: "sub" }, `${ds.unit} · ${RANK_GROUPS[grp][0]} · ${total} Länder mit Daten`))),
       chPos >= 0 ? h("p", { class: "rank-ch" }, "Schweiz: ", h("b", {}, `Rang ${chPos + 1}`), ` von ${total} · ${fmt(rows[chPos][1], dec)} ${ds.unit}`) : h("p", { class: "note" }, "Keine Daten für die Schweiz in diesem Jahr."),
-      h("div", { class: "panel-tools" }, h("div", { class: "tools-right" }, tblBtn, csvBtn)),
+      h("div", { class: "panel-tools" }, h("div", { class: "tools-right" }, tblBtn, csvBtn, fsBtn(() => body))),
       box, tbl,
       h("p", { class: "explain" }, isFc ? `Achtung: ${year} ist eine Schätzung bzw. Prognose des IWF.` : "")));
 
@@ -784,10 +837,11 @@ function buildRanking(body) {
       options: {
         indexAxis: "y", responsive: true, maintainAspectRatio: false, animation: false,
         plugins: { legend: { display: false }, tooltip: { backgroundColor: css("--surface"), titleColor: css("--text"), bodyColor: css("--text-2"), borderColor: css("--border"), borderWidth: 1,
+          padding: big ? 16 : 10, titleFont: { size: big ? 22 : 13, weight: "bold" }, bodyFont: { size: big ? 20 : 12 },
           callbacks: { title: (it) => `${rows.findIndex((r) => NAME(r[0]) === it[0].label) + 1}. ${it[0].label}`, label: (it) => ` ${fmt(it.raw, dec)} ${ds.unit}` } } },
         scales: {
-          x: { grid: { color: css("--grid") }, border: { display: false }, ticks: { color: css("--muted"), callback: (v) => fmt(v, 0) } },
-          y: { grid: { display: false }, border: { color: css("--grid") }, ticks: { color: css("--text-2"), autoSkip: false, font: { size: 12 },
+          x: { grid: { color: css("--grid") }, border: { display: false }, ticks: { color: css("--muted"), font: { size: big ? 20 : 12 }, callback: (v) => fmt(v, 0) } },
+          y: { grid: { display: false }, border: { color: css("--grid") }, ticks: { color: css("--text-2"), autoSkip: false, font: { size: big ? 20 : 12 },
             callback(v) { const c = shown[v]; return `${rows.indexOf(c) + 1}. ${NAME(c[0])}`; } } },
         },
       },
@@ -798,6 +852,7 @@ function buildRanking(body) {
   yearSel.addEventListener("change", () => { year = yearSel.value; render(); });
   grpSel.addEventListener("change", () => { grp = grpSel.value; render(); });
   topSel.addEventListener("change", () => { top = topSel.value; render(); });
+  body._render = render;
   orderBtn.addEventListener("click", () => { asc = !asc; orderBtn.textContent = asc ? "Tiefste zuerst" : "Höchste zuerst"; render(); });
   render();
 }
@@ -831,6 +886,19 @@ function updateStatus() {
   el.title = `${o.long} – Klick: Quellen`;
 }
 
+// Wann hat die Quelle zuletzt eine neue Zahl geliefert?
+function fmtDay(iso) {
+  const d = new Date(iso), days = Math.floor((new Date(NOW.toDateString()) - new Date(d.toDateString())) / DAY);
+  if (days === 0) return "heute";
+  if (days === 1) return "gestern";
+  return d.toLocaleDateString("de-CH", { day: "numeric", month: "numeric", year: "numeric" });
+}
+function changedText(obj, tracked) {
+  if (obj.changed) return fmtDay(obj.changed);
+  if (tracked) return `vor dem ${new Date(tracked).toLocaleDateString("de-CH", { day: "numeric", month: "numeric", year: "numeric" })}`;
+  return "–";
+}
+
 function renderQuellen(root) {
   appendAll(root, pageHead("Quellen", "Woher die Zahlen kommen und wie aktuell sie sind. Jede Reihe kann als CSV (für Excel) heruntergeladen werden."));
   const sum = h("div", { class: "cockpit-sum" });
@@ -846,9 +914,10 @@ function renderQuellen(root) {
   };
   paintSum();
 
-  const legend = h("p", { class: "note" }, h("i", { class: "dot ok sm" }), " aktuell  ", h("i", { class: "dot warn sm" }), " neuerer Wert wäre zu erwarten  ", h("i", { class: "dot crit sm" }), " Abruf fehlgeschlagen oder Update ausgefallen");
+  const legend = h("p", { class: "note" }, h("i", { class: "dot ok sm" }), " aktuell  ", h("i", { class: "dot warn sm" }), " neuerer Wert wäre zu erwarten  ", h("i", { class: "dot crit sm" }), " Abruf fehlgeschlagen oder Update ausgefallen",
+    h("br"), "«Neuer Wert seit»: wann die Quelle zuletzt eine neue Zahl geliefert hat.");
   const mk = (rows) => h("div", { class: "tablebox cockpit", style: "max-height:none" }, h("table", {},
-    h("thead", {}, h("tr", {}, ["", "Datenreihe", "Neuster Wert", "Stand", "Hinweis", "Quelle", ""].map((t, i) => h("th", { style: [1, 4, 5].includes(i) ? "text-align:left" : "" }, t)))),
+    h("thead", {}, h("tr", {}, ["", "Datenreihe", "Neuster Wert", "Stand", "Neuer Wert seit", "Hinweis", "Quelle", ""].map((t, i) => h("th", { style: [1, 5, 6].includes(i) ? "text-align:left" : "" }, t)))),
     h("tbody", {}, rows)));
   const order = { crit: 0, warn: 1, ok: 2 };
   const statusCell = (st) => h("td", {}, h("i", { class: `dot ${st.level}`, title: st.text }));
@@ -858,7 +927,7 @@ function renderQuellen(root) {
   const chRows = Object.entries(CH.series).map(([id, s]) => ({ id, s, st: status(s) })).sort((a, b) => order[a.st.level] - order[b.st.level]);
   root.append(mk(chRows.map(({ id, s, st }) => {
     const l = s.data.at(-1) || [];
-    return h("tr", {}, statusCell(st), h("td", { style: "text-align:left" }, `${s.title} (${s.unit})`), h("td", { class: "num" }, fmtBig(l[1], s.unit)), h("td", {}, fmtPeriod(l[0] || "")),
+    return h("tr", {}, statusCell(st), h("td", { style: "text-align:left" }, `${s.title} (${s.unit})`), h("td", { class: "num" }, fmtBig(l[1], s.unit)), h("td", {}, fmtPeriod(l[0] || "")), h("td", {}, changedText(s, CH.trackedSince)),
       h("td", { class: "reason" }, st.level === "ok" ? "" : st.long), srcCell(s),
       h("td", {}, h("button", { class: "btn", type: "button", onclick: () => download(`${id}.csv`, toCSV([["Periode", `${s.title} (${s.unit})`], ...s.data])) }, "CSV")));
   })));
@@ -871,7 +940,7 @@ function renderQuellen(root) {
       const lastP = latestOf(ds);
       const st = status(ds, { lastDate: lastP, hasForecast: !!ds.forecastFrom });
       return h("tr", {}, statusCell(st), h("td", { style: "text-align:left" }, `${ds.title} (${ds.unit})`), h("td", {}, `${Object.keys(ds.countries).length} Länder`),
-        h("td", {}, fmtPeriod(lastP) + (ds.forecastFrom ? " (inkl. Prognose)" : "")),
+        h("td", {}, fmtPeriod(lastP) + (ds.forecastFrom ? " (inkl. Prognose)" : "")), h("td", {}, changedText(ds, INTL.trackedSince)),
         h("td", { class: "reason" }, st.level === "ok" ? "" : st.long), srcCell(ds),
         h("td", {}, h("button", { class: "btn", type: "button", onclick: () => {
           const years = [...new Set(Object.values(ds.countries).flatMap((a) => a.map((r) => r[0])))].sort();
@@ -897,6 +966,7 @@ function route(force = false) {
   const page = RENDER[id] ? id : "ueberblick";
   if (page === currentPage && !force) return;
   currentPage = page;
+  if (fakeFs) { fakeFs = null; document.documentElement.classList.remove("fs-lock"); }
   for (const c of charts.values()) c.destroy();
   charts.clear();
   $("#tabs").querySelectorAll("a").forEach((a) => a.classList.toggle("active", a.dataset.p === (page === "daten" ? "quellen" : page)));
